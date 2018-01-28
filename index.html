@@ -1,0 +1,217 @@
+<h2 id="twitterapishardingissue">Twitter API sharding issue</h2>
+
+<h4 id="introduction">Introduction</h4>
+
+<p>A couple of months ago I was scrolling through Twitter and realized how holding down the <strong>F</strong> key on a Tweet, causing me to quickly like and unlike it, gave me some unexpected and interesting results. Doing this allowed me to sometimes like the same Tweet multiple times, and sometimes even decrease existing likes.</p>
+
+<p>I opened up the Chrome Developer Tools and went to the "<em>Network</em>" tab. Turns out that when I spam a Tweet with like-and-unlike requests, the Twitter servers can't keep up and throws errors like this.</p>
+
+<pre><code class="json language-json">{"errors":[{"code":144,"message":"No status found with that ID."}]}
+</code></pre>
+
+<p><img src="https://image.prntscr.com/image/qA832sFyQqSQdejV1ejgpQ.png" alt="chrome-dev" /></p>
+
+<p>Time passed and I kind of forgot about the find until recently.</p>
+
+<h4 id="nodejsscript">Node.js script</h4>
+
+<p>Time for automation. Since Twitter has a rate-limit of supposedly 1,000/day (<em>...even though I start getting <strong>429</strong>'s at around 600/day</em>), I'd like to keep the requests down to a minimum so I don't exceed the rate-limit.  I decided to write the script in Node.js.</p>
+
+<pre><code class="javascript language-javascript">var request = require('xhr-request');
+var sleep = require('sleep');
+var async = require('async');
+</code></pre>
+
+<p>I used the following dependencies, you can get them through npm by running <code>npm install --save xhr-request sleep async</code>.  I then specify my authorization token, cookie and CSRF key for my Twitter account.</p>
+
+<pre><code class="javascript language-javascript">var authorization = '',
+    cookie = '',
+    csrf = '';
+</code></pre>
+
+<p>After configuring my Twitter account for the script I define the following two functions.</p>
+
+<pre><code class="javascript language-javascript">function retweet() {
+  request('https://api.twitter.com/1.1/statuses/retweet.json', {
+    method: "POST",
+    headers: {
+      'authority':               'api.twitter.com',
+      'path':                    '/1.1/statuses/retweet.json',
+      'authorization':           authorization,
+      'content-type':            'application/x-www-form-urlencoded',
+      'cookie':                  cookie,
+      'dnt':                     '1',
+      'x-csrf-token':            csrf,
+      'x-twitter-active-user':   'yes',
+      'x-twitter-auth-type':     'OAuth2Session'
+    },
+    query: {
+      'id':                      process.argv[3],
+      'tweet_stat_count':        '10000'
+    }
+  }, function(err, data) {
+    if (err) {
+      throw (err);
+    } else {
+      return data;
+    }
+  });
+}
+
+function unretweet() {
+  request('https://api.twitter.com/1.1/statuses/unretweet.json', {
+    method: "POST",
+    headers: {
+      'authority':               'api.twitter.com',
+      'path':                    '/1.1/statuses/unretweet.json',
+      'authorization':           authorization,
+      'content-type':            'application/x-www-form-urlencoded',
+      'cookie':                  cookie,
+      'dnt':                     '1',
+      'x-csrf-token':            csrf,
+      'x-twitter-active-user':   'yes',
+      'x-twitter-auth-type':     'OAuth2Session'
+    },
+    query: {
+      'method':                 'DELETE',
+      'id':                      process.argv[3],
+      'tweet_stat_count':        '10000'
+    }
+  }, function(err, data) {
+    if (err) {
+      throw (err);
+    } else {
+      return data;
+    }
+  });
+}
+</code></pre>
+
+<p>Every time I call the <code>retweet()</code> or <code>unretweet()</code> function it's going to send an XHR-request to the Twitter API and retweet and unretweet, respectively. </p>
+
+<p>Now, using async I call the <code>retweet()</code> function, and then 10 milliseconds after I'll call the <code>unretweet()</code> function. I've found that this timing is the best, and most of the time forces a <strong>404</strong>'s and <strong>403</strong>'s. </p>
+
+<pre><code class="javascript language-javascript">async.parallel({
+  one: function(callback) {
+    for (var i = 0; i &lt; 15; i++) {
+      setTimeout(function() {
+        retweet();
+      }, 1);
+    }
+  },
+  two: function(callback) {
+    for (var i = 0; i &lt; 15; i++) {
+      setTimeout(function() {
+        unretweet();
+      }, 10);
+    }
+  }
+}, function(err, results) {
+  console.log(":)");
+});
+</code></pre>
+
+<p>Here's my finished script:</p>
+
+<pre><code class="javascript language-javascript">var request = require('xhr-request');
+var sleep = require('sleep');
+var async = require('async');
+
+var authorization = '',
+    cookie = '',
+    csrf = '';
+
+if (process.argv[2] === '-i' &amp;&amp; process.argv[3]) {
+
+    function retweet() {
+        request('https://api.twitter.com/1.1/statuses/retweet.json', {
+            method: "POST",
+            headers: {
+                'authority':               'api.twitter.com',
+                'path':                    '/1.1/statuses/retweet.json',
+                'authorization':           authorization,
+                'content-type':            'application/x-www-form-urlencoded',
+                'cookie':                  cookie,
+                'dnt':                     '1',
+                'x-csrf-token':            csrf,
+                'x-twitter-active-user':   'yes',
+                'x-twitter-auth-type':     'OAuth2Session'
+            },
+            query: {
+                'id':                      process.argv[3],
+                'tweet_stat_count':        '10000'
+            }
+        }, function(err, data) {
+            if (err) {
+                throw (err);
+            } else {
+                return data;
+            }
+        });
+    }
+
+    function unretweet() {
+        request('https://api.twitter.com/1.1/statuses/unretweet.json', {
+            method: "POST",
+            headers: {
+                'authority':               'api.twitter.com',
+                'path':                    '/1.1/statuses/unretweet.json',
+                'authorization':           authorization,
+                'content-type':            'application/x-www-form-urlencoded',
+                'cookie':                  cookie,
+                'dnt':                     '1',
+                'x-csrf-token':            csrf,
+                'x-twitter-active-user':   'yes',
+                'x-twitter-auth-type':     'OAuth2Session'
+            },
+            query: {
+                'method':                 'DELETE',
+                'id':                      process.argv[3],
+                'tweet_stat_count':        '10000'
+            }
+        }, function(err, data) {
+            if (err) {
+                throw (err);
+            } else {
+                return data;
+            }
+        });
+    }
+
+    // Retweets
+    async.parallel({
+        one: function(callback) {
+            for (var i = 0; i &lt; 15; i++) {
+                setTimeout(function() {
+                    retweet();
+                }, 1);
+            }
+        },
+        two: function(callback) {
+            for (var i = 0; i &lt; 50; i++) {
+                setTimeout(function() {
+                    unretweet();
+                }, 2);
+            }
+        }
+    }, function(err, results) {
+        console.log(":)");
+    });
+
+} else {
+    console.log("Usage: node twitter.js [-i id]");
+    console.log("Example: https://twitter.com/maxxarmino/status/\x1b[32m955722260978991104\x1b[0m &lt;-- ID");
+}
+</code></pre>
+
+<h4 id="usingitinthewild">Using it in the wild</h4>
+
+<p>What I did was simply to find a Tweet, and run it.</p>
+
+<p><img src="https://image.prntscr.com/image/OgbFxmPUT8O6a9rkJHQnuw.png" alt="twitter1" /></p>
+
+<p><img src="https://image.prntscr.com/image/TL63qln_QtCydBghmybR_A.png" alt="console" /></p>
+
+<p><img src="https://image.prntscr.com/image/A7KcVcWkTv_WsEtUrieJ-A.png" alt="twitter2" /></p>
+
+<p>As you can see, the statistics have been decreased by -6.</p>
